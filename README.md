@@ -10,8 +10,8 @@ An autonomous logistics engine designed to automate teacher coverage assignments
 
 ## 📺 Project Demo
 > [!TIP]
-> **[Click here to watch the AI Video Demo on HeyGen/Guidde]**
-> *(Replace this link with your actual video link)*
+> **https://github.com/user-attachments/assets/YOUR-VIDEO-ID-HERE**
+
 
 ---
 
