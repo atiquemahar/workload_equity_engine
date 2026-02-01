@@ -14,6 +14,7 @@ An autonomous logistics engine designed to automate teacher coverage assignments
 https://github.com/user-attachments/assets/e2f7b063-fd61-4d38-8cec-56bf1e2fb1cb
 
 
+<img width="1236" height="608" alt="worklod equity engine" src="https://github.com/user-attachments/assets/5f963cd9-77fc-4bee-9f41-d1d2a744e809" />
 
 ---
 
