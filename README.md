@@ -9,8 +9,10 @@ An autonomous logistics engine designed to automate teacher coverage assignments
 ---
 
 ## 📺 Project Demo
-> [!TIP]
-> **https://github.com/user-attachments/assets/YOUR-VIDEO-ID-HERE**
+
+
+https://github.com/user-attachments/assets/e2f7b063-fd61-4d38-8cec-56bf1e2fb1cb
+
 
 
 ---
