@@ -1,0 +1,768 @@
+{
+  "name": "AI Automation Workload Equity Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY",
+          "mode": "list",
+          "cachedResultName": "Teacher_coverage_system",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Master_Timetable",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1648,
+        208
+      ],
+      "id": "a35e6735-bf22-4d4e-b389-3bcab5ec585e",
+      "name": "master_timetable",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RRHg46gJqlNQBZkX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst schedule = input.timetable || [];\nconst absentTeachers = input.absent_teachers || [];\nconst day = (input.day_of_week || \"\").trim();\n\nlet allRequirements = [];\n\nabsentTeachers.forEach(teacher => {\n    const teacherRow = schedule.find(row => \n      row.Teacher_Name.toLowerCase() === teacher.toLowerCase() && \n      row.Day.toLowerCase() === day.toLowerCase()\n    );\n\n    if (teacherRow) {\n      for (let i = 1; i <= 6; i++) {\n        const periodKey = `Period_${i}`;\n        const classInfo = teacherRow[periodKey];\n        if (classInfo && classInfo !== \"FREE\") {\n          allRequirements.push({\n            absent_teacher: teacher,\n            period: i,\n            class: classInfo\n          });\n        }\n      }\n    }\n});\n\nreturn [{\n  json: {\n    ...input,\n    requirements: allRequirements,\n    total_periods: allRequirements.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -976,
+        288
+      ],
+      "id": "3c28f70a-166e-438a-88fd-699a16ae4078",
+      "name": "extract_period_requirement"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "40f16b34-2f74-4118-b3e3-10321fb8779d",
+              "leftValue": "={{$json.total_periods}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -752,
+        288
+      ],
+      "id": "d2a664fb-2a91-49e1-91bf-103a80ff9e29",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Get input data\nconst inputData = $input.first().json; \nconst requirements = inputData.requirements || [];\nconst dayToSearch = (inputData.day_of_week || \"\").trim().toLowerCase();\nconst absentTeacher = inputData.absent_teacher;\n\n// 2. Reference the correct nodes from your workflow\n// Changed 'teachers' to 'fetch_teacher_master' to match your node name\nconst fullTimetable = $('master_timetable').all().map(i => i.json);\nconst masterListData = $('fetch_teacher_master').all().map(i => i.json); \n\n// 3. Process each period\nconst finalCoveragePlan = requirements.map(req => {\n  const periodKey = `Period_${req.period}`;\n  \n  const availableStaff = fullTimetable\n    .filter(row => {\n        return (row.Day || \"\").trim().toLowerCase() === dayToSearch && \n               row.Teacher_Name !== absentTeacher && \n               (row[periodKey] || \"\").trim().toUpperCase() === \"FREE\";\n    })\n    .map(row => {\n        // Look up all metadata (Email, Subject, Count) from the Master List\n        const info = masterListData.find(t => t.Name === row.Teacher_Name) || {};\n        return {\n          name: row.Teacher_Name,\n          email: info.Email || 'N/A',\n          subject: info.Subject || 'N/A',\n          total_coverages_to_date: info.Total_Coverages || 0 \n        };\n    });\n\n  return {\n    ...req,\n    available_teachers: availableStaff,\n    status: availableStaff.length > 0 ? \"Candidates Found\" : \"No Staff Free\"\n  };\n});\n\nreturn [{\n  json: {\n    absent_teacher: absentTeacher,\n    date: inputData.date,\n    coverage_options: finalCoveragePlan\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        288
+      ],
+      "id": "2aa2a177-b2be-4f24-ad23-e69eb0d144f7",
+      "name": "find_available_teachers"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Parse the AI's JSON output\nconst inputData = $input.first().json;\nconst rawText = inputData.text || inputData.message?.content || \"\";\nconst parsedData = typeof rawText === 'string' ? JSON.parse(rawText) : rawText;\n\n// 2. Get the list of assignments from AI\nlet assignments = Array.isArray(parsedData.assignments) ? parsedData.assignments : [];\n\n// 3. Get the source data (requirements and available teachers) from the previous node\nconst sourceData = $('find_available_teachers').first().json;\nconst requirements = sourceData.coverage_options || [];\n\n// 4. Internal tracker to handle a teacher assigned twice in one submission\nconst teacherCounters = {}; \n\nreturn assignments.map(item => {\n    // A. Identify the selected teacher's name correctly\n    const selectedName = item.assigned_teacher;\n    \n    // B. Find the original requirement to get the metadata (Email, Current Count, Absent Teacher)\n    const originalReq = requirements.find(r => r.period === item.period) || {};\n    const teacherDetails = (originalReq.available_teachers || []).find(t => t.name === selectedName) || {};\n\n    // C. Handle the coverage count tracking\n    if (!(selectedName in teacherCounters)) {\n        // Start with the value from the Master List (provided by find_available_teachers)\n        teacherCounters[selectedName] = teacherDetails.total_coverages_to_date || 0;\n    }\n\n    const prevCount = teacherCounters[selectedName];\n    const newCount = prevCount + 1;\n    teacherCounters[selectedName] = newCount; // Update tracker for next loop\n\n    return {\n        json: {\n            Date: sourceData.date,\n            Period: `Period ${item.period}`,\n            Class: item.class || originalReq.class,\n            Covering_Teacher: selectedName,\n            // If multiple teachers were absent, this finds the specific one for this class\n            Covered_For: originalReq.absent_teacher || sourceData.absent_teacher, \n            Previous_Total: prevCount,\n            New_Total: newCount,\n            Reason: \"Equity Assignment\"\n        }\n    };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        288
+      ],
+      "id": "e783063e-f02f-447f-8f3b-e8d0fc3d7eeb",
+      "name": "prepare_coverage_history_rows"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY",
+          "mode": "list",
+          "cachedResultName": "Teacher_coverage_system",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2090338222,
+          "mode": "list",
+          "cachedResultName": "Coverage_History",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit#gid=2090338222"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.Date }}",
+            "Period": "={{ $json.Period }}",
+            "Class": "={{ $json.Class }}",
+            "Covering_Teacher": "={{ $json.Covering_Teacher }}",
+            "Covered_For": "={{ $json.Covered_For }}",
+            "Subject": "={{ $json.Subject }}",
+            "Timestamp": "={{ $json.Timestamp }}",
+            "Submitted_By": "={{ $json.Submitted_By }}",
+            "Reason": "={{ $json.Reason }}",
+            "Previous_Total": "={{ $json.Previous_Total }}",
+            "New_Total": "={{ $json.New_Total }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Period",
+              "displayName": "Period",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Class",
+              "displayName": "Class",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Covering_Teacher",
+              "displayName": "Covering_Teacher",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Covered_For",
+              "displayName": "Covered_For",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Reason",
+              "displayName": "Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Submitted_By",
+              "displayName": "Submitted_By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Previous_Total",
+              "displayName": "Previous_Total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "New_Total",
+              "displayName": "New_Total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        272,
+        384
+      ],
+      "id": "b6c66a12-3cbe-45ed-bd20-d64e14df5b53",
+      "name": "append_coverage_history",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RRHg46gJqlNQBZkX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst webhookData = input.body || input;\nconst fullSchedule = $('master_timetable').all().map(item => item.json);\n\n// Split multiple names by comma and clean up spaces\nlet rawNames = webhookData.Absent_Teacher || webhookData.absent_teacher || \"Unknown\";\nlet teacherNames = rawNames.split(',').map(n => n.trim()).filter(n => n);\n\nlet dateVal = webhookData.Date || webhookData.date || new Date().toISOString().split('T')[0];\nlet dayVal = webhookData.Day_of_week || webhookData.day_of_week;\n\nif (!dayVal && dateVal) {\n    dayVal = new Date(dateVal).toLocaleDateString('en-US', { weekday: 'long' });\n}\n\nreturn [{\n  json: {\n    absent_teachers: teacherNames, // Now an array of names\n    date: dateVal,\n    day_of_week: dayVal,\n    submitted_by: webhookData.Submitted_by || webhookData.submitted_by || \"Admin\",\n    timetable: fullSchedule \n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        288
+      ],
+      "id": "32acc1c8-8c29-4e76-855b-58a9ba2c44a5",
+      "name": "merge_webhook_and_timetable"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "numberInputs": 4
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1424,
+        256
+      ],
+      "id": "3edb3279-ffe5-429b-9cbe-71d1d12f1efb",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY",
+          "mode": "list",
+          "cachedResultName": "Teacher_coverage_system",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2090338222,
+          "mode": "list",
+          "cachedResultName": "Coverage_History",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit#gid=2090338222"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1648,
+        496
+      ],
+      "id": "8ac0a670-c001-4f5c-b42d-843dea6a5be4",
+      "name": "coverage_history",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RRHg46gJqlNQBZkX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=As a Senior Administrator, review these coverage options for classes missed by {{ $json.absent_teacher }}:\n\nData: {{ JSON.stringify($json.coverage_options) }}\n\nAssignment Rules:\n\nWorkload Equity (Highest Priority): For each period, assign the teacher who has the lowest total_coverages_to_date.\n\nSubject Match: If two or more teachers have the same lowest count, choose the one whose subject matches the class.\n\nCandidate Constraint: You must only choose teachers who appear in the available_teachers list for that specific period. Do not look for or suggest anyone else.\n\nReturn only the JSON object. Do not include any conversational text or markdown formatting outside of the JSON structure.\nAlways return the assignments as a flat JSON array under the key 'assignments'. Do not use period numbers as keys.",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        -304,
+        288
+      ],
+      "id": "d6fead05-e4ca-4063-bc2e-d91381ce70a8",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          },
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -240,
+        512
+      ],
+      "id": "9862281f-6162-4bb9-8e2b-9141b63cd2ed",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "VWOqqBtg3R9MaNtS",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "formTitle": "Absent_teachers",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Date",
+              "fieldType": "date"
+            },
+            {
+              "fieldLabel": "Absent_Teacher"
+            },
+            {
+              "fieldLabel": "Day_of_week"
+            },
+            {
+              "fieldLabel": "Submitted_by",
+              "defaultValue": "First Assistant"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        -1872,
+        288
+      ],
+      "id": "6852f0fd-2d8c-416c-ab1f-3b242d11f5ab",
+      "name": "On form submission",
+      "webhookId": "99bcbf61-a2d5-47c6-ad01-144792e2a4aa"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This node now looks back to the assignment data, not the sheet update results\nconst items = $('prepare_coverage_history_rows').all(); \nconst date = items[0].json.Date || new Date().toLocaleDateString();\n\nconst rows = items.map(item => {\n    const data = item.json;\n    return `\n    <tr>\n        <td style=\"border: 1px solid #dee2e6; padding: 12px;\">${data.Period}</td>\n        <td style=\"border: 1px solid #dee2e6; padding: 12px;\">${data.Class}</td>\n        <td style=\"border: 1px solid #dee2e6; padding: 12px;\"><strong>${data.Covering_Teacher}</strong></td>\n        <td style=\"border: 1px solid #dee2e6; padding: 12px; font-size: 0.85em; color: #666;\">Covering for ${data.Covered_For}</td>\n    </tr>`;\n}).join('');\n\nconst html = `\n<!DOCTYPE html>\n<html>\n<head>\n    <style>\n        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f8f9fa; padding: 20px; }\n        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\n        h2 { color: #28a745; border-bottom: 2px solid #28a745; padding-bottom: 10px; }\n        table { width: 100%; border-collapse: collapse; margin-top: 20px; }\n        th { background-color: #28a745; color: white; text-align: left; padding: 12px; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <h2>✅ All Coverages Assigned</h2>\n        <p>The following assignments have been logged for <strong>${date}</strong>:</p>\n        <table>\n            <thead>\n                <tr><th>Period</th><th>Class</th><th>Assigned Teacher</th><th>Reason</th></tr>\n            </thead>\n            <tbody>${rows}</tbody>\n        </table>\n    </div>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        192
+      ],
+      "id": "d84ef3a9-7117-4d6a-a647-c34944de07f0",
+      "name": "Generate_HTML_Response"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY",
+          "mode": "list",
+          "cachedResultName": "Teacher_coverage_system",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 731442154,
+          "mode": "list",
+          "cachedResultName": "Teacher_Master",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit#gid=731442154"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1648,
+        16
+      ],
+      "id": "ff689787-2e41-403c-8b91-39100564a4a1",
+      "name": "fetch_teacher_master",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RRHg46gJqlNQBZkX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.html }}"
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.3,
+      "position": [
+        496,
+        192
+      ],
+      "id": "9e168bc9-5319-4d01-92ba-3a9ea9a257aa",
+      "name": "Form",
+      "webhookId": "92e93c88-0b91-4da5-861a-b153afdffb5d"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY",
+          "mode": "list",
+          "cachedResultName": "Teacher_coverage_system",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 731442154,
+          "mode": "list",
+          "cachedResultName": "Teacher_Master",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HZOnJ6rN-EhPBkTs9QyNm_zC9CXDtD9rKUq6f-1f_CY/edit#gid=731442154"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.Covering_Teacher }}",
+            "Total_Coverages": "={{ $json.New_Total }}"
+          },
+          "matchingColumns": [
+            "Name"
+          ],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Total_Coverages",
+              "displayName": "Total_Coverages",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        496,
+        384
+      ],
+      "id": "d0cefb01-99b0-4607-8239-5e7e3a8fa01b",
+      "name": "update_teacher_master",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "RRHg46gJqlNQBZkX",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "master_timetable": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "extract_period_requirement": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "find_available_teachers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "find_available_teachers": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare_coverage_history_rows": {
+      "main": [
+        [
+          {
+            "node": "append_coverage_history",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate_HTML_Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "append_coverage_history": {
+      "main": [
+        [
+          {
+            "node": "update_teacher_master",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge_webhook_and_timetable": {
+      "main": [
+        [
+          {
+            "node": "extract_period_requirement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "coverage_history": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "merge_webhook_and_timetable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "prepare_coverage_history_rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "fetch_teacher_master",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "master_timetable",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "coverage_history",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fetch_teacher_master": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Generate_HTML_Response": {
+      "main": [
+        [
+          {
+            "node": "Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update_teacher_master": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "errorWorkflow": "Z0HCUxnUyNLVrsVq"
+  },
+  "versionId": "7f69bbc0-7ac5-4088-85b4-e6cb74fb5ccb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "93951dc49ebc069555ee903053f67437daf06ad102ba74f3abbac4b01cff2559"
+  },
+  "id": "Z0HCUxnUyNLVrsVq",
+  "tags": []
+}
